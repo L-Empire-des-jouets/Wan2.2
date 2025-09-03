@@ -450,7 +450,7 @@ class WanTI2V:
                 torch.cuda.empty_cache()
             if self.rank == 0:
                 # Réduire chunk_t pour Ulysses multi-GPU
-                default_chunk = "8" if dist.is_initialized() and dist.get_world_size() > 1 else "20"
+                default_chunk = "2" if dist.is_initialized() and dist.get_world_size() > 1 else "20"
                 chunk_t = int(os.environ.get("WAN_VAE_DECODE_CHUNK_T", default_chunk))
                 
                 # Forcer une synchronisation et nettoyage mémoire avant décodage
@@ -666,7 +666,7 @@ class WanTI2V:
 
             if self.rank == 0:
                 # Réduire chunk_t pour Ulysses multi-GPU
-                default_chunk = "8" if dist.is_initialized() and dist.get_world_size() > 1 else "20"
+                default_chunk = "2" if dist.is_initialized() and dist.get_world_size() > 1 else "20"
                 chunk_t = int(os.environ.get("WAN_VAE_DECODE_CHUNK_T", default_chunk))
                 
                 # Forcer une synchronisation et nettoyage mémoire avant décodage
