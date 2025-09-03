@@ -169,14 +169,45 @@ class WanTI2V:
         assert z.dim() == 4, "latent attendu en [C, T, H', W']"
         T = z.shape[1]
         decoded_parts = []
+        
+        # Réduire chunk_t si on détecte des problèmes de mémoire
+        mem_free = torch.cuda.mem_get_info()[0] / 1024**3  # GB libres
+        if mem_free < 5.0 and chunk_t > 8:  # Si moins de 5GB libres
+            chunk_t = max(4, chunk_t // 2)
+            logging.warning(f"Low GPU memory ({mem_free:.1f}GB), reducing chunk_t to {chunk_t}")
+        
         for i in range(0, T, chunk_t):
             part = z[:, i:i+chunk_t]    # [C, t, H', W']
+            
+            # Synchroniser avant le décodage
+            torch.cuda.synchronize()
+            
             # Wan2_2_VAE.decode attend une liste de latents; renvoie [video_tensor]
             decoded = self.vae.decode([part])[0]  # [C, (t*H), W]
+            
+            # Option: déplacer sur CPU si la mémoire est critique
+            if mem_free < 3.0:
+                decoded = decoded.cpu()
+            
             decoded_parts.append(decoded)
+            
+            # Nettoyage agressif après chaque chunk
+            del part
+            torch.cuda.synchronize()
             torch.cuda.empty_cache()
+            
         # Les vidéos Wan sont empilées verticalement: concaténation sur la hauteur (dim=1)
-        video = torch.cat(decoded_parts, dim=1)   # [C, (T*H), W]
+        # Si les parties sont sur CPU, concaténer sur CPU
+        if decoded_parts and decoded_parts[0].device.type == 'cpu':
+            video = torch.cat(decoded_parts, dim=1)   # [C, (T*H), W]
+            video = video.to(self.device)  # Retour sur GPU
+        else:
+            video = torch.cat(decoded_parts, dim=1)   # [C, (T*H), W]
+            
+        # Nettoyage final
+        del decoded_parts
+        torch.cuda.empty_cache()
+        
         return [video]
 
     def generate(self,
@@ -418,7 +449,14 @@ class WanTI2V:
                 torch.cuda.synchronize()
                 torch.cuda.empty_cache()
             if self.rank == 0:
-                chunk_t = int(os.environ.get("WAN_VAE_DECODE_CHUNK_T", "20"))
+                # Réduire chunk_t pour Ulysses multi-GPU
+                default_chunk = "8" if dist.is_initialized() and dist.get_world_size() > 1 else "20"
+                chunk_t = int(os.environ.get("WAN_VAE_DECODE_CHUNK_T", default_chunk))
+                
+                # Forcer une synchronisation et nettoyage mémoire avant décodage
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                
                 videos = self._decode_in_chunks(x0, chunk_t)
 
         del noise, latents
@@ -627,7 +665,14 @@ class WanTI2V:
                 torch.cuda.empty_cache()
 
             if self.rank == 0:
-                chunk_t = int(os.environ.get("WAN_VAE_DECODE_CHUNK_T", "20"))
+                # Réduire chunk_t pour Ulysses multi-GPU
+                default_chunk = "8" if dist.is_initialized() and dist.get_world_size() > 1 else "20"
+                chunk_t = int(os.environ.get("WAN_VAE_DECODE_CHUNK_T", default_chunk))
+                
+                # Forcer une synchronisation et nettoyage mémoire avant décodage
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                
                 videos = self._decode_in_chunks(x0, chunk_t)
 
         del noise, latent, x0
