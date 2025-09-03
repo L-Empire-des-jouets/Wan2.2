@@ -1,7 +1,11 @@
 __pycache__/
 .DS_Store
 .vscode*
+wan22_venv/
+Wan2.2-TI2V-5B/
+results/*.mp4
 tmp_examples*
 new_checkpoint*
 batch_test*
 nohup*
+*.mp4
