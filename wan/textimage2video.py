@@ -159,6 +159,26 @@ class WanTI2V:
 
         return model
 
+    def _decode_in_chunks(self, x0, chunk_t: int = 20):
+        """
+        Decode le latent en paquets de 'chunk_t' frames pour éviter les pics VRAM.
+        x0: [list] avec un unique tenseur latent de forme [C, T, H', W'].
+        Retourne un [list] avec un unique tenseur vidéo de forme [C, (T*H), W].
+        """
+        z = x0[0]                       # [C, T, H', W']
+        assert z.dim() == 4, "latent attendu en [C, T, H', W']"
+        T = z.shape[1]
+        decoded_parts = []
+        for i in range(0, T, chunk_t):
+            part = z[:, i:i+chunk_t]    # [C, t, H', W']
+            # Wan2_2_VAE.decode attend une liste de latents; renvoie [video_tensor]
+            decoded = self.vae.decode([part])[0]  # [C, (t*H), W]
+            decoded_parts.append(decoded)
+            torch.cuda.empty_cache()
+        # Les vidéos Wan sont empilées verticalement: concaténation sur la hauteur (dim=1)
+        video = torch.cat(decoded_parts, dim=1)   # [C, (T*H), W]
+        return [video]
+
     def generate(self,
                  input_prompt,
                  img=None,
@@ -398,7 +418,8 @@ class WanTI2V:
                 torch.cuda.synchronize()
                 torch.cuda.empty_cache()
             if self.rank == 0:
-                videos = self.vae.decode(x0)
+                chunk_t = int(os.environ.get("WAN_VAE_DECODE_CHUNK_T", "20"))
+                videos = self._decode_in_chunks(x0, chunk_t)
 
         del noise, latents
         del sample_scheduler
@@ -606,7 +627,8 @@ class WanTI2V:
                 torch.cuda.empty_cache()
 
             if self.rank == 0:
-                videos = self.vae.decode(x0)
+                chunk_t = int(os.environ.get("WAN_VAE_DECODE_CHUNK_T", "20"))
+                videos = self._decode_in_chunks(x0, chunk_t)
 
         del noise, latent, x0
         del sample_scheduler
